@@ -9,7 +9,7 @@
 """
 
 from os import urandom
-
+import argparse
 
 def generate_key(key_len: int) -> bytes:
     """
@@ -286,3 +286,57 @@ def decrypt_file(input_file: str, output_file: str, key: bytes) -> None:
         for line in infile:
             decrypted_chunk = decrypt(line[:-1].replace(seperator, b"\n"), key)
             outfile.write(decrypted_chunk)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Encrypt or decrypt files using the Pyjama Vest Cipher.",
+        epilog="Examples:\n    pjvc -m encrypt -i input.txt -o encrypted.txt -k my.key\n    pjvc -m decrypt -i encrypted.txt -o output.txt -k my.key\n    pjvc -m keygen -s 4096 -o my.key",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument("--mode", "-m", choices=["encrypt", "decrypt", "keygen"], help="Mode: encrypt, decrypt or keygen.")
+    parser.add_argument("--input", "-i", help="Path to the input file.", default=None)
+    parser.add_argument("--output", "-o", help="Path to the output file.")
+    parser.add_argument("--key", "-k", help="Encryption/Decryption key file path.", default=None)
+    parser.add_argument("--size", "-s", help="Key size for keygen mode.", default=None)
+
+    args = parser.parse_args()
+
+    key = None
+
+    if args.key is not None:
+        key = load_keyfile(args.key)
+
+    if args.mode == "encrypt":
+        if key is None:
+            print("No key specified!")
+        else:
+            infile = args.input
+            outfile = args.output
+            if infile is not None:
+                encrypt_file(infile, outfile, key)
+            else:
+                print("No input specified!")
+    elif args.mode == "decrypt":
+        if key is None:
+            print("No key specified!")
+        else:
+            infile = args.input
+            outfile = args.output
+            if infile is not None:
+                decrypt_file(infile, outfile, key)
+            else:
+                print("No input specified!")
+    elif args.mode == "keygen":
+        if args.size is not None:
+            size = args.size
+            try:
+                size = int(size)
+            except:
+                print("Size must be 0-65535.")
+
+            if size < 0 or size > 65535:
+                print("Size must be 0-65535.")
+            else:
+                generate_keyfile(args.output, size)
+        else:
+            print("Size must be specified.")
