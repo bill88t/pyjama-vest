@@ -9,11 +9,10 @@
 """
 
 from os import urandom
-import argparse
 
-def generate_key(key_len: int) -> bytes:
+def generate_key(key_len: int, override_jumpfq=-1, override_jumplen=-1) -> bytes:
     """
-    Generates a trully random key, given length. The key receives it's header information, and randomized jump offsets.
+    Generates a machine-random key, given length. The key receives it's header information, and randomized jump offsets.
 
     Key structure:
         Header byte: 1 byte, always 0xff
@@ -29,10 +28,26 @@ def generate_key(key_len: int) -> bytes:
         raise ValueError("Key must be at least 4 bytes long")
     if key_len > 65535:  # static block sizes limit size
         raise ValueError("Key can be at most 65535 bytes")
+    if not isinstance(override_jumpfq, int):
+        raise TypeError("Jump frequency must be an interger")
+    if override_jumpfq != -1 and (override_jumpfq < 1 or override_jumpfq > 255):
+        raise ValueError("Jump frequency must be 1-255")
+    if not isinstance(override_jumplen, int):
+        raise TypeError("Jump length must be an interger")
+    if override_jumpfq != -1 and override_jumpfq < 1:
+            raise ValueError("Jump frequency must be bigger than 0")
 
     key = (
         b"\xff" + key_len.to_bytes(2, byteorder="big") + urandom(key_len + 4) + b"\x00"
     )
+    if override_jumpfq != -1:
+        key = bytearray(key)
+        key[3] = override_jumpfq
+        key = bytes(key)
+    if override_jumplen != -1:
+        key = bytearray(key)
+        key[4:7] = override_jumplen.to_bytes(3, "big")
+        key = bytes(key)
     return key
 
 
@@ -90,12 +105,12 @@ def load_keyfile(file_path: str) -> bytes:
         raise OSError(f"An error occurred while loading the key: {e}")
 
 
-def generate_keyfile(file_path: str, length: int = 4096) -> None:
+def generate_keyfile(file_path: str, length: int = 4096, override_jumpfq=-1, override_jumplen=-1) -> None:
     """
     Generate a key and store it into a file.
     """
     with open(file_path, "wb") as f:
-        key = generate_key(length)
+        key = generate_key(length, override_jumpfq, override_jumplen)
         f.write(key)
 
 
@@ -287,56 +302,80 @@ def decrypt_file(input_file: str, output_file: str, key: bytes) -> None:
             decrypted_chunk = decrypt(line[:-1].replace(seperator, b"\n"), key)
             outfile.write(decrypted_chunk)
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Encrypt or decrypt files using the Pyjama Vest Cipher.",
-        epilog="Examples:\n    pjvc -m encrypt -i input.txt -o encrypted.txt -k my.key\n    pjvc -m decrypt -i encrypted.txt -o output.txt -k my.key\n    pjvc -m keygen -s 4096 -o my.key",
-        formatter_class=argparse.RawTextHelpFormatter
-    )
-    parser.add_argument("--mode", "-m", choices=["encrypt", "decrypt", "keygen"], help="Mode: encrypt, decrypt or keygen.")
-    parser.add_argument("--input", "-i", help="Path to the input file.", default=None)
-    parser.add_argument("--output", "-o", help="Path to the output file.")
-    parser.add_argument("--key", "-k", help="Encryption/Decryption key file path.", default=None)
-    parser.add_argument("--size", "-s", help="Key size for keygen mode.", default=None)
+try:
+    import argparse
+    if __name__ == "__main__":
+        parser = argparse.ArgumentParser(
+            description="Encrypt or decrypt files using the Pyjama Vest Cipher.",
+            epilog="Examples:\n    pjvc -m encrypt -i input.txt -o encrypted.txt -k my.key\n    pjvc -m decrypt -i encrypted.txt -o output.txt -k my.key\n    pjvc -m keygen -s 4096    -o my.key",
+            formatter_class=argparse.RawTextHelpFormatter
+        )
+        parser.add_argument("--mode", "-m", choices=["encrypt", "decrypt", "keygen"], help="Mode: encrypt, decrypt or keygen.")
+        parser.add_argument("--input", "-i", help="Path to the input file.", default=None)
+        parser.add_argument("--output", "-o", help="Path to the output file.")
+        parser.add_argument("--key", "-k", help="Encryption/Decryption key file path.", default=None)
+        parser.add_argument("--size", "-s", help="Key size for keygen mode.", default=None)
+        parser.add_argument("--jump_frequency", '-f', help="Manual override for jump frequency.", default=-1)
+        parser.add_argument("--jump_length", "-j", help="Manual override for jump length.", default=-1)
 
-    args = parser.parse_args()
+        args = parser.parse_args()
 
-    key = None
+        key = None
 
-    if args.key is not None:
-        key = load_keyfile(args.key)
+        if args.key is not None:
+            key = load_keyfile(args.key)
 
-    if args.mode == "encrypt":
-        if key is None:
-            print("No key specified!")
-        else:
-            infile = args.input
-            outfile = args.output
-            if infile is not None:
-                encrypt_file(infile, outfile, key)
+        if args.mode == "encrypt":
+            if key is None:
+                print("No key specified!")
             else:
-                print("No input specified!")
-    elif args.mode == "decrypt":
-        if key is None:
-            print("No key specified!")
-        else:
-            infile = args.input
-            outfile = args.output
-            if infile is not None:
-                decrypt_file(infile, outfile, key)
+                infile = args.input
+                outfile = args.output
+                if infile is not None:
+                    encrypt_file(infile, outfile, key)
+                else:
+                    print("No input specified!")
+        elif args.mode == "decrypt":
+            if key is None:
+                print("No key specified!")
             else:
-                print("No input specified!")
-    elif args.mode == "keygen":
-        if args.size is not None:
-            size = args.size
-            try:
-                size = int(size)
-            except:
-                print("Size must be 0-65535.")
+                infile = args.input
+                outfile = args.output
+                if infile is not None:
+                    decrypt_file(infile, outfile, key)
+                else:
+                    print("No input specified!")
+        elif args.mode == "keygen":
+            if args.size is not None:
+                size = args.size
+                try:
+                    size = int(size)
+                    if size < 0 or size > 65535:
+                        raise ValueError
+                except:
+                    print("Size must be 0-65535.")
 
-            if size < 0 or size > 65535:
-                print("Size must be 0-65535.")
+                jfq = args.jump_frequency
+                try:
+                    jfq = int(jfq)
+                except:
+                    jfq = -2
+
+                jl = args.jump_length
+                try:
+                    jl = int(jl)
+                except:
+                    jl = -2
+
+                if jfq != -1 and (jfq < 1 or jfq > 255):
+                    print("Jump frequency must be 1-255.")
+                elif jl != -1 and jl < 1:
+                    print("Jump length must be more than 1.")
+                else:
+                    generate_keyfile(args.output, size, jfq, jl)
             else:
-                generate_keyfile(args.output, size)
+                print("Size must be specified.")
         else:
-            print("Size must be specified.")
+            parser.print_help()
+except NameError:
+    pass
